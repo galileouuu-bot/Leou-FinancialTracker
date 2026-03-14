@@ -514,7 +514,32 @@ window.ENV_PIN_HASH = 'd4cf70ff4b70d74f47fdd86bb01f4285712b60888fa65b0d0d6879507
   /* ── ACTION BUTTONS IN TABLE ─────────────────────────────── */
   .action-group { display: flex; gap: 4px; flex-wrap: nowrap; }
 
-  /* ── EXPORT BTN ──────────────────────────────────────────── */
+  /* ── BULK SELECT ─────────────────────────────────────────── */
+  .bulk-bar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    background: rgba(91,140,255,0.1);
+    border: 1px solid rgba(91,140,255,0.3);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .bulk-bar.visible { display: flex; }
+  .bulk-count { font-size: 13px; font-weight: 700; color: var(--accent); flex: 1; }
+  .bulk-btn {
+    padding: 6px 14px; border-radius: 8px;
+    font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 700;
+    cursor: pointer; border: none; transition: all 0.2s;
+  }
+
+  .cb-wrap { display: flex; align-items: center; justify-content: center; }
+  input[type="checkbox"] {
+    width: 16px; height: 16px; cursor: pointer;
+    accent-color: var(--accent);
+  }
+  tr.selected td { background: rgba(91,140,255,0.07) !important; }
   .export-btn {
     background: rgba(67,232,160,0.12); color: var(--accent3);
     border: 1px solid rgba(67,232,160,0.25);
@@ -705,10 +730,20 @@ window.ENV_PIN_HASH = 'd4cf70ff4b70d74f47fdd86bb01f4285712b60888fa65b0d0d6879507
           <option value="Paid">Paid</option>
         </select>
       </div>
+      <!-- Bulk action bar -->
+      <div class="bulk-bar" id="bulkBar">
+        <div class="bulk-count" id="bulkCount">0 selected</div>
+        <button class="bulk-btn" onclick="bulkMarkPaid()" style="background:rgba(67,232,160,0.15);color:var(--accent3);border:1px solid rgba(67,232,160,0.3);">✓ Mark Paid</button>
+        <button class="bulk-btn" onclick="bulkMarkUnpaid()" style="background:rgba(255,209,102,0.12);color:#ffd166;border:1px solid rgba(255,209,102,0.25);">↩ Mark Unpaid</button>
+        <button class="bulk-btn" onclick="bulkDelete()" style="background:rgba(255,77,109,0.15);color:var(--danger);border:1px solid rgba(255,77,109,0.3);">🗑 Delete</button>
+        <button class="bulk-btn" onclick="clearSelection()" style="background:var(--surface2);color:var(--muted);border:1px solid var(--border);">✕ Clear</button>
+      </div>
+
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
+              <th><input type="checkbox" id="selectAll" title="Select all"></th>
               <th>#</th><th>Date</th><th>Description</th>
               <th>Amount</th><th>Person</th><th>Cat.</th>
               <th>CC</th><th>Due</th><th>Status</th><th>Actions</th>
@@ -1473,6 +1508,8 @@ function populateFilters() {
     unique(transactions, 'cat').map(v => `<option value="${v}"${v===cVal?' selected':''}>${v}</option>`).join('');
 }
 
+let selectedIds = new Set();
+
 function renderTable() {
   populateFilters();
   const search = (document.getElementById('searchBox')?.value || '').toLowerCase();
@@ -1489,10 +1526,11 @@ function renderTable() {
   }).sort((a,b) => b.date.localeCompare(a.date));
 
   document.getElementById('txTable').innerHTML = filtered.map((t, i) => `
-    <tr>
+    <tr id="row-${t.id}" class="${selectedIds.has(t.id) ? 'selected' : ''}">
+      <td class="cb-wrap"><input type="checkbox" class="row-cb" data-id="${t.id}" ${selectedIds.has(t.id) ? 'checked' : ''}></td>
       <td style="color:var(--muted)">${i+1}</td>
       <td>${t.date}</td>
-      <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.desc}</td>
+      <td style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.desc}</td>
       <td class="${t.amount < 0 ? 'amount-negative' : ''}" style="${t.amount < 0 ? '' : 'color:var(--accent2)'}">
         ${t.amount < 0 ? '-' : ''}${fmt(t.amount)}
       </td>
@@ -1512,6 +1550,106 @@ function renderTable() {
       </td>
     </tr>
   `).join('');
+
+  // Checkbox event listeners
+  document.querySelectorAll('.row-cb').forEach(cb => {
+    cb.addEventListener('change', function() {
+      const id = parseInt(this.getAttribute('data-id'));
+      if (this.checked) {
+        selectedIds.add(id);
+        document.getElementById('row-' + id)?.classList.add('selected');
+      } else {
+        selectedIds.delete(id);
+        document.getElementById('row-' + id)?.classList.remove('selected');
+      }
+      updateBulkBar();
+    });
+  });
+
+  // Select all checkbox
+  const selectAll = document.getElementById('selectAll');
+  if (selectAll) {
+    selectAll.checked = false;
+    selectAll.addEventListener('change', function() {
+      document.querySelectorAll('.row-cb').forEach(cb => {
+        cb.checked = this.checked;
+        const id = parseInt(cb.getAttribute('data-id'));
+        if (this.checked) {
+          selectedIds.add(id);
+          document.getElementById('row-' + id)?.classList.add('selected');
+        } else {
+          selectedIds.delete(id);
+          document.getElementById('row-' + id)?.classList.remove('selected');
+        }
+      });
+      updateBulkBar();
+    });
+  }
+
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  const count = document.getElementById('bulkCount');
+  if (selectedIds.size > 0) {
+    bar.classList.add('visible');
+    count.textContent = `${selectedIds.size} selected`;
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.row-cb').forEach(cb => cb.checked = false);
+  document.querySelectorAll('tr.selected').forEach(tr => tr.classList.remove('selected'));
+  const sa = document.getElementById('selectAll');
+  if (sa) sa.checked = false;
+  updateBulkBar();
+}
+
+async function bulkMarkPaid() {
+  if (selectedIds.size === 0) return;
+  showLoading(true);
+  for (const id of selectedIds) {
+    const tx = transactions.find(t => t.id === id);
+    if (tx) { tx.status = 'Paid'; await saveTransactionToSupabase(tx); }
+  }
+  await saveData();
+  showLoading(false);
+  clearSelection();
+  renderTable();
+  showToast(`✅ ${selectedIds.size || 'Selected'} transactions marked Paid!`);
+}
+
+async function bulkMarkUnpaid() {
+  if (selectedIds.size === 0) return;
+  showLoading(true);
+  for (const id of selectedIds) {
+    const tx = transactions.find(t => t.id === id);
+    if (tx) { tx.status = 'Unpaid'; await saveTransactionToSupabase(tx); }
+  }
+  await saveData();
+  showLoading(false);
+  clearSelection();
+  renderTable();
+  showToast(`↩ Marked Unpaid!`);
+}
+
+async function bulkDelete() {
+  if (selectedIds.size === 0) return;
+  if (!confirm(`Delete ${selectedIds.size} transaction(s)? This cannot be undone.`)) return;
+  showLoading(true);
+  for (const id of selectedIds) {
+    transactions = transactions.filter(t => t.id !== id);
+    await deleteTransactionFromSupabase(id);
+  }
+  await saveData();
+  showLoading(false);
+  selectedIds.clear();
+  renderTable();
+  showToast(`🗑 Deleted!`);
 }
 
 async function markPaid(id) {
