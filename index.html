@@ -739,8 +739,7 @@ window.ENV_PIN_HASH = 'd4cf70ff4b70d74f47fdd86bb01f4285712b60888fa65b0d0d6879507
         </div>
         <div class="form-group">
           <label class="form-label">Charged to (c/o)</label>
-          <input class="form-input" type="text" id="f_cto" placeholder="e.g. Leou" list="cto_list">
-          <datalist id="cto_list"></datalist>
+          <input class="form-input" type="text" id="f_cto" placeholder="e.g. Leou" autocomplete="off">
         </div>
         <div class="form-group">
           <label class="form-label">Category</label>
@@ -1065,7 +1064,7 @@ const DEFAULT_EXPENSES = [
   { id: 11, desc: 'Laundry', amount: 2000 },
 ];
 
-const CAR_AMORT_START = new Date('2025-01-24');
+const CAR_AMORT_START = new Date('2025-01-26'); // first payment: January 26, 2025
 const CAR_AMORT_TOTAL_MONTHS = 60;
 const CAR_AMORT_MONTHLY = 24950;
 const CAR_AMORT_DAY = 26;
@@ -1549,7 +1548,6 @@ async function deleteTx(id) {
 // ══════════════════════════════════════════════════════════════
 function populateDataLists() {
   document.getElementById('cat_list').innerHTML = unique(transactions, 'cat').map(v => `<option value="${v}">`).join('');
-  document.getElementById('cto_list').innerHTML = unique(transactions, 'cto').map(v => `<option value="${v}">`).join('');
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('f_date').value = today;
   const d = new Date(); d.setMonth(d.getMonth()+1); d.setDate(0);
@@ -1626,13 +1624,27 @@ async function saveEdit() {
 // ══════════════════════════════════════════════════════════════
 function getCarAmortStats() {
   const now = new Date();
+  const firstPayment = new Date('2026-01-26');
+
+  // Count how many payment dates (26th of each month) have passed
+  // starting from Jan 26, 2026
   let paid = 0;
-  const d = new Date(CAR_AMORT_START);
-  d.setDate(CAR_AMORT_DAY);
-  if (d < CAR_AMORT_START) d.setMonth(d.getMonth() + 1);
-  while (d <= now && paid < CAR_AMORT_TOTAL_MONTHS) { paid++; d.setMonth(d.getMonth() + 1); }
+  let paymentDate = new Date(firstPayment);
+
+  while (paymentDate <= now && paid < CAR_AMORT_TOTAL_MONTHS) {
+    paid++;
+    paymentDate.setMonth(paymentDate.getMonth() + 1);
+  }
+
   const remaining = CAR_AMORT_TOTAL_MONTHS - paid;
-  return { paid, remaining, remainingAmount: remaining * CAR_AMORT_MONTHLY, total: CAR_AMORT_TOTAL_MONTHS };
+  const paidAmount = paid * CAR_AMORT_MONTHLY;
+  const remainingAmount = remaining * CAR_AMORT_MONTHLY;
+
+  // Next payment date
+  const nextPayment = new Date(firstPayment);
+  nextPayment.setMonth(nextPayment.getMonth() + paid);
+
+  return { paid, remaining, paidAmount, remainingAmount, nextPayment, total: CAR_AMORT_TOTAL_MONTHS };
 }
 
 function renderMonthly() {
@@ -1655,7 +1667,7 @@ function renderMonthly() {
     <div class="kpi green"><div class="kpi-label">Net Salary (Optum)</div><div class="kpi-value">${fmt(budget.netSalary)}</div><div class="kpi-sub">After tax & deductions</div></div>
     <div class="kpi pink"><div class="kpi-label">Total Fixed Expenses</div><div class="kpi-value">${fmt(totalMonthly)}</div><div class="kpi-sub">${budget.expenses.length} items</div></div>
     <div class="kpi ${deficit<0?'red':'green'}"><div class="kpi-label">${deficit<0?'Deficit':'Surplus'}</div><div class="kpi-value">${fmt(Math.abs(deficit))}</div><div class="kpi-sub">${deficit<0?'Short every month':'Extra every month'}</div></div>
-    <div class="kpi yellow"><div class="kpi-label">Car Amort Remaining</div><div class="kpi-value">${carStats.remaining} <span style="font-size:14px;font-weight:600;">mos</span></div><div class="kpi-sub">₱${carStats.remainingAmount.toLocaleString('en-PH')} left · ${carStats.paid}/${carStats.total} paid</div></div>
+    <div class="kpi yellow"><div class="kpi-label">Car Amort Remaining</div><div class="kpi-value">${carStats.remaining} <span style="font-size:14px;font-weight:600;">mos</span></div><div class="kpi-sub">₱${carStats.remainingAmount.toLocaleString('en-PH')} left · ${carStats.paid}/${carStats.total} paid · next: ${carStats.nextPayment.toLocaleDateString('en-PH', {month:'short', day:'numeric', year:'numeric'})}</div></div>
   `;
 
   if (charts.budget) charts.budget.destroy();
