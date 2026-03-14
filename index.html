@@ -1007,13 +1007,13 @@ document.addEventListener('keydown', e => {
 // ══════════════════════════════════════════════════════════════
 // SUPABASE
 // ══════════════════════════════════════════════════════════════
-let supabase = null;
+let supabaseClient = null;
 let useSupabase = false;
 
 function initSupabase() {
   if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     try {
-      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       useSupabase = true;
       document.getElementById('setupBanner').style.display = 'none';
     } catch(e) {
@@ -1105,8 +1105,8 @@ function loadFromLocal() {
 async function loadFromSupabase() {
   try {
     const [txRes, budgetRes] = await Promise.all([
-      supabase.from('transactions').select('*').order('date', { ascending: false }),
-      supabase.from('budget').select('*').eq('id', 1).single()
+      supabaseClient.from('transactions').select('*').order('date', { ascending: false }),
+      supabaseClient.from('budget').select('*').eq('id', 1).single()
     ]);
 
     if (txRes.error) throw txRes.error;
@@ -1141,7 +1141,7 @@ async function seedSupabase() {
     description: t.desc, amount: t.amount, cto: t.cto,
     cat: t.cat, due: t.due, status: t.status, cc: t.cc
   }));
-  await supabase.from('transactions').upsert(toInsert);
+  await supabaseClient.from('transactions').upsert(toInsert);
 }
 
 // ── SAVE DATA ──────────────────────────────────────────────────
@@ -1162,7 +1162,7 @@ async function saveTransactionToSupabase(tx) {
       description: tx.desc, amount: tx.amount, cto: tx.cto,
       cat: tx.cat, due: tx.due, status: tx.status, cc: tx.cc
     };
-    const { error } = await supabase.from('transactions').upsert(row);
+    const { error } = await supabaseClient.from('transactions').upsert(row);
     if (error) throw error;
   } catch(err) {
     console.error('Save TX error:', err);
@@ -1173,7 +1173,7 @@ async function saveTransactionToSupabase(tx) {
 async function deleteTransactionFromSupabase(id) {
   if (!useSupabase) return;
   try {
-    const { error } = await supabase.from('transactions').delete().eq('id', id);
+    const { error } = await supabaseClient.from('transactions').delete().eq('id', id);
     if (error) throw error;
   } catch(err) {
     console.error('Delete TX error:', err);
@@ -1183,7 +1183,7 @@ async function deleteTransactionFromSupabase(id) {
 async function saveBudgetToSupabase() {
   if (!useSupabase) return;
   try {
-    const { error } = await supabase.from('budget').upsert({
+    const { error } = await supabaseClient.from('budget').upsert({
       id: 1,
       net_salary: budget.netSalary,
       expenses: budget.expenses,
