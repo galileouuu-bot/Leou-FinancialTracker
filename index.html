@@ -589,7 +589,7 @@ let currentUser = null;
 let transactions = [];
 let nextId = 1;
 let charts = {};
-let budget = { netSalary: 42000, expenses: [], nextExpId: 1 };
+let budget = { netSalary: 42000, expenses: [], nextExpId: 1, carAmort: null };
 let selectedIds = new Set();
 let pendingBulkRows = [];
 const chartPeriods = { cat:'all', person:'all', time:'all' };
@@ -608,9 +608,7 @@ const DEFAULT_EXPENSES = [
   {id:11,desc:'Laundry',amount:2000},
 ];
 
-const CAR_AMORT_START = new Date('2025-01-26');
-const CAR_AMORT_TOTAL_MONTHS = 60;
-const CAR_AMORT_MONTHLY = 24950;
+// Car amort config is now per-user stored in budget.carAmort
 
 // ══════════════════════════════════════════════════════════════
 // HELPERS
@@ -904,7 +902,8 @@ async function loadData(){
         netSalary:budgetRes.data.net_salary||42000,
         expenses:budgetRes.data.expenses||[],
         nextExpId:budgetRes.data.next_exp_id||12,
-        seeded:budgetRes.data.seeded
+        seeded:budgetRes.data.seeded,
+        carAmort:budgetRes.data.car_amort||null
       };
     }else{
       budget={netSalary:0,expenses:[],nextExpId:1};
@@ -938,7 +937,7 @@ async function deleteTransactionFromSupabase(id){
 
 async function saveBudgetToSupabase(){
   try{
-    const{error}=await sb.from('budget').upsert({user_id:currentUser.id,net_salary:budget.netSalary,expenses:budget.expenses,next_exp_id:budget.nextExpId,seeded:true},{onConflict:'user_id'});
+    const{error}=await sb.from('budget').upsert({user_id:currentUser.id,net_salary:budget.netSalary,expenses:budget.expenses,next_exp_id:budget.nextExpId,seeded:true,car_amort:budget.carAmort||null},{onConflict:'user_id'});
     if(error)throw error;
   }catch(e){
     console.error('Budget save error:',e);showToast('⚠️ Budget sync error');
@@ -1301,16 +1300,20 @@ function clearExcelUpload(){
 // MONTHLY BUDGET
 // ══════════════════════════════════════════════════════════════
 function getCarAmortStats(){
-  const now=new Date();let paid=0;let pd=new Date(CAR_AMORT_START);
-  while(pd<=now&&paid<CAR_AMORT_TOTAL_MONTHS){paid++;pd.setMonth(pd.getMonth()+1);}
-  const remaining=CAR_AMORT_TOTAL_MONTHS-paid;
-  const nextPayment=new Date(CAR_AMORT_START);nextPayment.setMonth(nextPayment.getMonth()+paid);
-  return{paid,remaining,remainingAmount:remaining*CAR_AMORT_MONTHLY,nextPayment,total:CAR_AMORT_TOTAL_MONTHS};
+  if(!budget.carAmort) return null;
+  const{startDate,totalMonths,monthly,payDay}=budget.carAmort;
+  const now=new Date();
+  const start=new Date(startDate);
+  let paid=0;let pd=new Date(start);
+  while(pd<=now&&paid<totalMonths){paid++;pd.setMonth(pd.getMonth()+1);}
+  const remaining=totalMonths-paid;
+  const nextPayment=new Date(start);nextPayment.setMonth(nextPayment.getMonth()+paid);
+  return{paid,remaining,remainingAmount:remaining*monthly,nextPayment,total:totalMonths,monthly,payDay};
 }
 
 function renderMonthly(){
   const totalMonthly=budget.expenses.reduce((s,e)=>s+e.amount,0);
-  const deficit=budget.netSalary-totalMonthly;const carStats=getCarAmortStats();
+  const deficit=budget.netSalary-totalMonthly;const carStats=getCarAmortStats(); // null if not configured
   // Show empty state for new users with no budget set up
   if(budget.netSalary === 0 && budget.expenses.length === 0) {
     document.getElementById('deficitBanner').innerHTML = '';
@@ -1344,7 +1347,7 @@ function renderMonthly(){
     <div class="kpi green"><div class="kpi-label">Net Salary</div><div class="kpi-value">${fmt(budget.netSalary)}</div><div class="kpi-sub">After tax & deductions</div></div>
     <div class="kpi pink"><div class="kpi-label">Total Fixed Expenses</div><div class="kpi-value">${fmt(totalMonthly)}</div><div class="kpi-sub">${budget.expenses.length} items</div></div>
     <div class="kpi ${deficit<0?'red':'green'}"><div class="kpi-label">${deficit<0?'Deficit':'Surplus'}</div><div class="kpi-value">${fmt(Math.abs(deficit))}</div><div class="kpi-sub">${deficit<0?'Short every month':'Extra every month'}</div></div>
-    <div class="kpi yellow"><div class="kpi-label">Car Amort Remaining</div><div class="kpi-value">${carStats.remaining} <span style="font-size:14px;font-weight:600;">mos</span></div><div class="kpi-sub">₱${carStats.remainingAmount.toLocaleString('en-PH')} left · ${carStats.paid}/${carStats.total} paid · next: ${carStats.nextPayment.toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}</div></div>`;
+    ${carStats ? `<div class="kpi yellow" style="cursor:pointer;" onclick="openCarAmortEditor()"><div class="kpi-label">Car Amort Remaining</div><div class="kpi-value">${carStats.remaining} <span style="font-size:14px;font-weight:600;">mos</span></div><div class="kpi-sub">₱${carStats.remainingAmount.toLocaleString('en-PH')} left · ${carStats.paid}/${carStats.total} paid · next: ${carStats.nextPayment.toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})} · ✏️ edit</div></div>` : `<div class="kpi yellow" style="cursor:pointer;" onclick="openCarAmortEditor()"><div class="kpi-label">Car Amortization</div><div class="kpi-value" style="font-size:14px;">Not set up</div><div class="kpi-sub">Click to configure ➕</div></div>`}`;
   if(charts.budget)charts.budget.destroy();
   charts.budget=new Chart(document.getElementById('budgetChart'),{type:'bar',data:{labels:budget.expenses.map(e=>e.desc.length>20?e.desc.slice(0,20)+'…':e.desc),datasets:[{label:'Monthly Cost',data:budget.expenses.map(e=>e.amount),backgroundColor:COLORS,borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>` ${fmt(ctx.raw)}`},bodyFont:{family:'DM Mono'}}},scales:{x:{grid:{color:'#242d42'},ticks:{color:'#8892aa',callback:v=>'₱'+(v/1000).toFixed(0)+'k',font:{family:'DM Mono'}}},y:{grid:{display:false},ticks:{color:'#e8eaf2',font:{family:'Syne',size:10}}}}}});
   if(charts.income)charts.income.destroy();
@@ -1360,6 +1363,82 @@ function addExpenseRow(){const desc=document.getElementById('newExpDesc').value.
 async function saveBudgetExpenses(){budget.expenses.forEach(e=>{const dEl=document.getElementById('edesc-'+e.id);const aEl=document.getElementById('eamt-'+e.id);if(dEl)e.desc=dEl.value.trim()||e.desc;if(aEl){const v=parseFloat(aEl.value);if(!isNaN(v))e.amount=v;}});await saveBudgetToSupabase();closeModal('budgetModal');renderMonthly();showToast('✅ Budget updated!');}
 
 // ══════════════════════════════════════════════════════════════
+// CAR AMORTIZATION EDITOR
+// ══════════════════════════════════════════════════════════════
+function openCarAmortEditor(){
+  if(budget.carAmort){
+    document.getElementById('ca_startDate').value=budget.carAmort.startDate;
+    document.getElementById('ca_payDay').value=budget.carAmort.payDay;
+    document.getElementById('ca_years').value=budget.carAmort.totalMonths/12;
+    document.getElementById('ca_monthly').value=budget.carAmort.monthly;
+  }else{
+    document.getElementById('ca_startDate').value='';
+    document.getElementById('ca_payDay').value='';
+    document.getElementById('ca_years').value='5';
+    document.getElementById('ca_monthly').value='';
+  }
+  // Live preview on input change
+  ['ca_startDate','ca_payDay','ca_years','ca_monthly'].forEach(id=>{
+    document.getElementById(id).oninput=updateCarAmortPreview;
+  });
+  updateCarAmortPreview();
+  openModal('carAmortModal');
+}
+
+function updateCarAmortPreview(){
+  const startDate=document.getElementById('ca_startDate').value;
+  const payDay=parseInt(document.getElementById('ca_payDay').value);
+  const years=parseInt(document.getElementById('ca_years').value);
+  const monthly=parseFloat(document.getElementById('ca_monthly').value);
+  const preview=document.getElementById('ca_preview');
+  const previewText=document.getElementById('ca_preview_text');
+  if(!startDate||!payDay||!years||!monthly){preview.style.display='none';return;}
+  const totalMonths=years*12;
+  const now=new Date();const start=new Date(startDate);
+  let paid=0;let pd=new Date(start);
+  while(pd<=now&&paid<totalMonths){paid++;pd.setMonth(pd.getMonth()+1);}
+  const remaining=totalMonths-paid;
+  const nextPayment=new Date(start);nextPayment.setMonth(nextPayment.getMonth()+paid);
+  const totalAmount=totalMonths*monthly;
+  const paidAmount=paid*monthly;
+  const remainingAmount=remaining*monthly;
+  preview.style.display='block';
+  previewText.innerHTML=`
+    Total term: <strong>${totalMonths} months (${years} years)</strong><br>
+    Months paid: <strong>${paid} / ${totalMonths}</strong><br>
+    Months remaining: <strong style="color:var(--accent4)">${remaining} months</strong><br>
+    Amount paid so far: <strong>₱${paidAmount.toLocaleString('en-PH',{minimumFractionDigits:2})}</strong><br>
+    Remaining balance: <strong style="color:var(--accent2)">₱${remainingAmount.toLocaleString('en-PH',{minimumFractionDigits:2})}</strong><br>
+    Next payment: <strong style="color:var(--accent3)">${nextPayment.toLocaleDateString('en-PH',{month:'long',day:'numeric',year:'numeric'})}</strong>
+  `;
+}
+
+async function saveCarAmort(){
+  const startDate=document.getElementById('ca_startDate').value;
+  const payDay=parseInt(document.getElementById('ca_payDay').value);
+  const years=parseInt(document.getElementById('ca_years').value);
+  const monthly=parseFloat(document.getElementById('ca_monthly').value);
+  if(!startDate||!payDay||isNaN(years)||isNaN(monthly)||monthly<=0){
+    showToast('⚠️ Please fill all fields');return;
+  }
+  if(payDay<1||payDay>31){showToast('⚠️ Payment day must be between 1 and 31');return;}
+  budget.carAmort={startDate,payDay,totalMonths:years*12,monthly};
+  await saveBudgetToSupabase();
+  closeModal('carAmortModal');
+  renderMonthly();
+  showToast('🚗 Car amortization saved!');
+}
+
+async function removeCarAmort(){
+  if(!confirm('Remove car amortization from your budget?'))return;
+  budget.carAmort=null;
+  await saveBudgetToSupabase();
+  closeModal('carAmortModal');
+  renderMonthly();
+  showToast('🗑 Car amortization removed');
+}
+
+// ══════════════════════════════════════════════════════════════
 // EXPORT CSV
 // ══════════════════════════════════════════════════════════════
 function exportCSV(){
@@ -1372,6 +1451,53 @@ function exportCSV(){
   URL.revokeObjectURL(url);showToast('✅ CSV exported!');
 }
 </script>
+
+<!-- ── CAR AMORT MODAL ─────────────────────────────────────── -->
+<div class="modal-overlay" id="carAmortModal">
+  <div class="modal-box" style="max-width:440px;">
+    <div class="modal-header">
+      <div class="modal-title">🚗 Car Amortization Setup</div>
+      <button class="modal-close" onclick="closeModal('carAmortModal')">✕</button>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:20px;line-height:1.6;">Configure your car loan so the dashboard can track how many months are remaining and when your next payment is due.</p>
+    <div style="display:grid;gap:14px;">
+      <div class="form-group">
+        <label class="form-label">📅 Date of 1st Amortization Payment</label>
+        <input class="form-input" type="date" id="ca_startDate" placeholder="e.g. 2025-01-26">
+      </div>
+      <div class="form-group">
+        <label class="form-label">📆 Payment Day of Month</label>
+        <input class="form-input" type="number" id="ca_payDay" min="1" max="31" placeholder="e.g. 26" inputmode="numeric">
+        <span style="font-size:10px;color:var(--muted);">The day each month your payment is due</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label">⏳ Loan Term (Years)</label>
+        <select class="form-input" id="ca_years">
+          <option value="1">1 year (12 months)</option>
+          <option value="2">2 years (24 months)</option>
+          <option value="3">3 years (36 months)</option>
+          <option value="4">4 years (48 months)</option>
+          <option value="5" selected>5 years (60 months)</option>
+          <option value="6">6 years (72 months)</option>
+          <option value="7">7 years (84 months)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">💰 Monthly Payment Amount (₱)</label>
+        <input class="form-input" type="number" id="ca_monthly" step="0.01" placeholder="e.g. 24950" inputmode="decimal">
+      </div>
+    </div>
+    <div id="ca_preview" style="display:none;background:rgba(255,209,102,0.08);border:1px solid rgba(255,209,102,0.2);border-radius:10px;padding:12px 14px;margin-top:16px;">
+      <div style="font-size:11px;color:var(--accent4);font-weight:700;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;">Preview</div>
+      <div id="ca_preview_text" style="font-size:12px;color:var(--text);line-height:1.8;font-family:'DM Mono',monospace;"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;">
+      <button class="btn btn-primary" onclick="saveCarAmort()" style="flex:1;padding:11px;">💾 Save</button>
+      ${budget && budget.carAmort ? `<button class="btn btn-danger" onclick="removeCarAmort()" style="padding:11px 16px;">🗑 Remove</button>` : ''}
+      <button class="btn" onclick="closeModal('carAmortModal')" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:11px 16px;">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <script>
   if('serviceWorker' in navigator){
