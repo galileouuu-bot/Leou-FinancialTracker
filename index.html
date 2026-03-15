@@ -9,6 +9,7 @@
 <title>💳 Leou's Finance Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 // ══════════════════════════════════════════════════
 // YOUR CONFIG — edit these values directly here
@@ -805,6 +806,47 @@ window.ENV_PIN_HASH = 'd4cf70ff4b70d74f47fdd86bb01f4285712b60888fa65b0d0d6879507
       <button class="btn btn-primary" onclick="addTransaction()" style="width:100%;padding:13px;font-size:15px;">
         ➕ Add Transaction
       </button>
+    </div>
+
+    <!-- ── BULK UPLOAD CARD ──────────────────────────────────── -->
+    <div class="card" style="max-width:860px;margin-top:20px;">
+      <div class="card-title"><span>📂</span> Bulk Upload via Excel</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.7;">
+        Upload an <strong style="color:var(--text)">.xlsx</strong> file with these columns in order:<br>
+        <span style="font-family:'DM Mono',monospace;font-size:11px;background:var(--surface2);padding:4px 10px;border-radius:6px;display:inline-block;margin-top:6px;">
+          Date &nbsp;|&nbsp; Description &nbsp;|&nbsp; Amount &nbsp;|&nbsp; Charged To &nbsp;|&nbsp; Category &nbsp;|&nbsp; CC Source &nbsp;|&nbsp; Due Date &nbsp;|&nbsp; Status
+        </span>
+      </p>
+
+      <!-- Drop Zone -->
+      <div id="dropZone" onclick="document.getElementById('excelFileInput').click()" style="border:2px dashed var(--border);border-radius:12px;padding:32px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:16px;">
+        <div style="font-size:32px;margin-bottom:8px;">📊</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Click to choose or drag & drop your Excel file</div>
+        <div style="font-size:11px;color:var(--muted);">Supports .xlsx and .xls files</div>
+        <input type="file" id="excelFileInput" accept=".xlsx,.xls" style="display:none;" onchange="handleExcelUpload(event)">
+      </div>
+
+      <!-- Preview Table -->
+      <div id="excelPreview" style="display:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+          <div id="previewLabel" style="font-size:13px;font-weight:700;color:var(--accent3);"></div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn" onclick="clearExcelUpload()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:7px 14px;font-size:12px;">✕ Clear</button>
+            <button class="btn btn-primary" id="confirmUploadBtn" onclick="confirmBulkUpload()" style="padding:7px 18px;font-size:12px;">💾 Save All to Database</button>
+          </div>
+        </div>
+        <div class="table-wrap" style="max-height:320px;overflow-y:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>Date</th><th>Description</th><th>Amount</th>
+                <th>Person</th><th>Category</th><th>CC</th><th>Due Date</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="excelPreviewBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1960,6 +2002,145 @@ function exportCSV() {
 // ══════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// BULK EXCEL UPLOAD
+// ══════════════════════════════════════════════════════════════
+let pendingBulkRows = [];
+
+// Drag & drop styling
+document.addEventListener('DOMContentLoaded', function() {
+  const zone = document.getElementById('dropZone');
+  if (!zone) return;
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = 'var(--accent)'; zone.style.background = 'rgba(91,140,255,0.06)'; });
+  zone.addEventListener('dragleave', () => { zone.style.borderColor = 'var(--border)'; zone.style.background = ''; });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.style.borderColor = 'var(--border)';
+    zone.style.background = '';
+    const file = e.dataTransfer.files[0];
+    if (file) processExcelFile(file);
+  });
+});
+
+function handleExcelUpload(event) {
+  const file = event.target.files[0];
+  if (file) processExcelFile(file);
+}
+
+function processExcelFile(file) {
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+      // Skip header row if first cell looks like a label
+      const startRow = (typeof rows[0][0] === 'string' && isNaN(Date.parse(rows[0][0])) && rows[0][0].toLowerCase().includes('date')) ? 1 : 0;
+      pendingBulkRows = [];
+
+      for (let i = startRow; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r[0] && !r[1]) continue; // skip empty rows
+
+        // Parse date — handle Excel serial numbers or real date objects
+        let dateStr = '';
+        if (r[0] instanceof Date) {
+          dateStr = r[0].toISOString().split('T')[0];
+        } else if (typeof r[0] === 'number') {
+          const d = XLSX.SSF.parse_date_code(r[0]);
+          dateStr = `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+        } else {
+          dateStr = String(r[0]).trim();
+        }
+
+        // Parse due date same way
+        let dueStr = '';
+        if (r[6] instanceof Date) {
+          dueStr = r[6].toISOString().split('T')[0];
+        } else if (typeof r[6] === 'number') {
+          const d = XLSX.SSF.parse_date_code(r[6]);
+          dueStr = `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+        } else {
+          dueStr = String(r[6] || '').trim();
+        }
+
+        const amount = parseFloat(String(r[2]).replace(/[^0-9.-]/g,'')) || 0;
+        const status = String(r[7] || 'Unpaid').trim();
+
+        pendingBulkRows.push({
+          date: dateStr,
+          desc: String(r[1] || '').trim(),
+          amount,
+          cto: String(r[3] || '').trim(),
+          cat: String(r[4] || '').trim(),
+          cc: String(r[5] || '').trim(),
+          due: dueStr,
+          status: status || 'Unpaid'
+        });
+      }
+
+      if (pendingBulkRows.length === 0) { showToast('⚠️ No valid rows found in file'); return; }
+
+      // Show preview
+      document.getElementById('previewLabel').textContent = `${pendingBulkRows.length} transaction(s) ready to import`;
+      document.getElementById('excelPreviewBody').innerHTML = pendingBulkRows.map((t, i) => `
+        <tr>
+          <td style="color:var(--muted)">${i+1}</td>
+          <td>${t.date}</td>
+          <td style="max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.desc}</td>
+          <td style="color:var(--accent2)">${t.amount < 0 ? '-' : ''}₱${Math.abs(t.amount).toLocaleString('en-PH',{minimumFractionDigits:2})}</td>
+          <td>${t.cto}</td>
+          <td><span style="background:rgba(91,140,255,0.1);color:#5b8cff;padding:2px 7px;border-radius:5px;font-size:10px;">${t.cat}</span></td>
+          <td style="color:var(--muted)">${t.cc}</td>
+          <td style="color:var(--muted)">${t.due}</td>
+          <td><span class="badge ${t.status==='Paid'?'badge-paid':'badge-unpaid'}">${t.status}</span></td>
+        </tr>
+      `).join('');
+      document.getElementById('excelPreview').style.display = 'block';
+      document.getElementById('dropZone').style.borderColor = 'var(--accent3)';
+    } catch(err) {
+      console.error('Excel parse error:', err);
+      showToast('⚠️ Could not read file. Make sure it is a valid .xlsx file.');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function confirmBulkUpload() {
+  if (pendingBulkRows.length === 0) return;
+  const btn = document.getElementById('confirmUploadBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Saving...';
+  showLoading(true);
+
+  let saved = 0;
+  for (const row of pendingBulkRows) {
+    const tx = { id: nextId++, date: row.date, post_date: row.date, desc: row.desc, amount: row.amount, cto: row.cto, cat: row.cat, due: row.due, status: row.status, cc: row.cc };
+    transactions.push(tx);
+    await saveTransactionToSupabase(tx);
+    saved++;
+  }
+
+  await saveData();
+  showLoading(false);
+  clearExcelUpload();
+  renderOverview();
+  showToast(`✅ ${saved} transactions imported successfully!`);
+  btn.disabled = false;
+  btn.textContent = '💾 Save All to Database';
+}
+
+function clearExcelUpload() {
+  pendingBulkRows = [];
+  document.getElementById('excelPreview').style.display = 'none';
+  document.getElementById('excelPreviewBody').innerHTML = '';
+  document.getElementById('excelFileInput').value = '';
+  document.getElementById('dropZone').style.borderColor = 'var(--border)';
+  document.getElementById('dropZone').style.background = '';
+}
+
 async function initApp() {
   document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-PH', {
     weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
