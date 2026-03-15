@@ -999,6 +999,9 @@ async function checkPin() {
 }
 
 function unlockApp() {
+  // Save session so refresh does not require re-login (expires in 8 hours)
+  const expiry = Date.now() + (8 * 60 * 60 * 1000);
+  localStorage.setItem('finance_session', expiry);
   document.getElementById('lockScreen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   initApp();
@@ -1006,6 +1009,13 @@ function unlockApp() {
 
 // ── PIN BUTTON EVENT LISTENERS ─────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
+  // Check if user already has a valid session (skip lock screen)
+  const session = localStorage.getItem('finance_session');
+  if (session && Date.now() < parseInt(session)) {
+    unlockApp();
+    return;
+  }
+
   // Digit buttons
   document.querySelectorAll('.pin-btn[data-digit]').forEach(btn => {
     btn.addEventListener('click', function(e) {
