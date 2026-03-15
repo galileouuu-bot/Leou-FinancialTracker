@@ -890,8 +890,8 @@ async function loadData(){
       const seeded=budgetRes.data&&budgetRes.data.seeded===true;
       if(!seeded){
         transactions=[];nextId=1;
-        // Mark seeded for new users
-        await sb.from('budget').upsert({user_id:uid,seeded:true,net_salary:42000,expenses:DEFAULT_EXPENSES,next_exp_id:12},{onConflict:'user_id'});
+        // Mark seeded for new users — blank budget, they fill in their own
+        await sb.from('budget').upsert({user_id:uid,seeded:true,net_salary:0,expenses:[],next_exp_id:1},{onConflict:'user_id'});
       }else{
         transactions=[];nextId=1;
       }
@@ -900,12 +900,12 @@ async function loadData(){
     if(budgetRes.data){
       budget={
         netSalary:budgetRes.data.net_salary||42000,
-        expenses:budgetRes.data.expenses||JSON.parse(JSON.stringify(DEFAULT_EXPENSES)),
+        expenses:budgetRes.data.expenses||[],
         nextExpId:budgetRes.data.next_exp_id||12,
         seeded:budgetRes.data.seeded
       };
     }else{
-      budget={netSalary:42000,expenses:JSON.parse(JSON.stringify(DEFAULT_EXPENSES)),nextExpId:12};
+      budget={netSalary:0,expenses:[],nextExpId:1};
     }
   }catch(e){
     console.error('Load error:',e);
@@ -1309,6 +1309,26 @@ function getCarAmortStats(){
 function renderMonthly(){
   const totalMonthly=budget.expenses.reduce((s,e)=>s+e.amount,0);
   const deficit=budget.netSalary-totalMonthly;const carStats=getCarAmortStats();
+  // Show empty state for new users with no budget set up
+  if(budget.netSalary === 0 && budget.expenses.length === 0) {
+    document.getElementById('deficitBanner').innerHTML = '';
+    document.getElementById('budgetKpis').innerHTML = '';
+    document.getElementById('budgetChart').parentElement.parentElement.innerHTML += '';
+    const emptyMsg = `
+      <div style="text-align:center;padding:40px 20px;background:var(--surface);border:1px solid var(--border);border-radius:14px;margin-bottom:20px;">
+        <div style="font-size:40px;margin-bottom:12px;">💰</div>
+        <div style="font-size:16px;font-weight:800;margin-bottom:8px;">Set Up Your Budget</div>
+        <div style="color:var(--muted);font-size:13px;margin-bottom:20px;line-height:1.6;">Click Edit below to add your monthly expenses<br>and set your net salary to get started.</div>
+        <button class="btn btn-primary" onclick="openSalaryEditor()" style="margin-right:8px;">✏️ Set Salary</button>
+        <button class="btn" onclick="openBudgetEditor()" style="background:rgba(255,209,102,0.12);color:#ffd166;border:1px solid rgba(255,209,102,0.25);">➕ Add Expenses</button>
+      </div>
+    `;
+    document.getElementById('deficitBanner').innerHTML = emptyMsg;
+    if(charts.budget)charts.budget.destroy();
+    if(charts.income)charts.income.destroy();
+    return;
+  }
+
   document.getElementById('deficitBanner').innerHTML=`
     <div class="deficit" style="border:1px solid ${deficit<0?'rgba(255,77,109,0.2)':'rgba(67,232,160,0.2)'};background:${deficit<0?'rgba(255,77,109,0.08)':'rgba(67,232,160,0.08)'};">
       <div class="deficit-icon">${deficit<0?'⚠️':'✅'}</div>
